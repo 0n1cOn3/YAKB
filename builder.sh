@@ -4,7 +4,7 @@ set -euo pipefail
 # Written by: cyberknight777
 # Co-Developed by: 0n1cOn3
 # Project Name: YAKB
-# Current Release: v3.0
+# Current Release: v3.3 FINAL GA
 # ----------------------------------------------------------------------
 # Copyright (c) 2022-2025 Cyber Knight
 # License: GNU GENERAL PUBLIC LICENSE v3, 29 June 2007
@@ -14,7 +14,21 @@ set -euo pipefail
 log() { echo -e "\e[1;32m[INFO]\e[0m $*"; }
 err() { echo -e "\e[1;31m[✗] ERROR:\e[0m $*" >&2; }
 
-# ========== BUILD FLAG HANDLING ==========
+# ========== ABORT CLEANUP HANDLER ==========
+cleanup_on_abort() {
+  echo -e "\n\e[1;33m[INFO] Aborted — Performing partial cleanup...\e[0m"
+  [[ -d "${KDIR}/neutron-clang" ]] && rm -rf "${KDIR}/neutron-clang" && log "Partial Neutron-Clang cleaned."
+  [[ -d "${KDIR}/out" ]] && rm -rf "${KDIR}/out" && log "Partial out/ directory cleaned."
+  [[ -d "${KDIR}/anykernel3-dragonheart/modules" ]] && rm -rf "${KDIR}/anykernel3-dragonheart/modules" && log "Anykernel modules cleaned."
+  [[ -d "${KDIR}/prebuilt" ]] && rm -rf "${KDIR}/prebuilt" && log "Partial prebuilt repo cleaned."
+  find "${KDIR}" -type f -name ".pwd" -exec rm -f {} \;
+  echo -e "\n\e[1;31m[✗] Build aborted — partial files cleaned, logs preserved.\e[0m"
+  exit 1
+}
+
+trap cleanup_on_abort SIGINT SIGTERM
+
+# ========== BUILD FLAGS ==========
 apply_build_flags() {
   if [[ "${DEBUG_BUILD}" == "1" ]]; then
     log "Debug Build Mode Activated"
@@ -24,18 +38,15 @@ apply_build_flags() {
     export KCFLAGS="-O2"
   fi
 }
-
 # ========== ENVIRONMENT CHECK ==========
 env_check() {
   local args="$*"
   local missing=()
 
-  # Skip env check for --help or no build-action commands
+  # Skip env check for help commands or non-critical actions
   if [[ "$args" == *"--help"* || "$args" == *"help"* ]]; then
     return 0
   fi
-
-  # Skip for clean
   if [[ "$args" == *"clean"* ]]; then
     return 0
   fi
@@ -47,7 +58,7 @@ env_check() {
     done
   fi
 
-  # Telegram token only if Telegram enabled AND real build jobs
+  # Telegram required if enabled AND on real build jobs
   if [[ "${TGI:-0}" == "1" && ( "$args" == *"img"* || "$args" == *"yakbmod"* || "$args" == *"mod"* || "$args" == *"hdr"* ) ]]; then
     [[ -z "${TOKEN:-}" ]] && missing+=("TOKEN")
   fi
@@ -61,15 +72,13 @@ env_check() {
 # ========== TOOLCHAIN SETUP ==========
 setup_toolchain() {
   if [[ "${COMPILER}" == "gcc" ]]; then
-    if [[ ! -d "${KDIR}/gcc64" ]]; then
-      git clone https://github.com/cyberknight777/gcc-arm64 --depth=1 gcc64
-    fi
-    if [[ ! -d "${KDIR}/gcc32" ]]; then
-      git clone https://github.com/cyberknight777/gcc-arm --depth=1 gcc32
-    fi
-    KBUILD_COMPILER_STRING=$("${KDIR}"/gcc64/bin/aarch64-elf-gcc --version | head -n 1)
+    [[ ! -d "${KDIR}/gcc64" ]] && git clone https://github.com/cyberknight777/gcc-arm64 --depth=1 gcc64
+    [[ ! -d "${KDIR}/gcc32" ]] && git clone https://github.com/cyberknight777/gcc-arm --depth=1 gcc32
+
+    KBUILD_COMPILER_STRING=$("${KDIR}/gcc64/bin/aarch64-elf-gcc" --version | head -n 1)
     export KBUILD_COMPILER_STRING
     export PATH="${KDIR}/gcc32/bin:${KDIR}/gcc64/bin:/usr/bin/:${PATH}"
+
     MAKE=(
       O=out
       CROSS_COMPILE=aarch64-elf-
@@ -83,6 +92,7 @@ setup_toolchain() {
       CC=aarch64-elf-gcc
       KCFLAGS="${KCFLAGS}"
     )
+
   elif [[ "${COMPILER}" == "clang" ]]; then
     if [[ ! -f "${KDIR}/neutron-clang/bin/clang" ]]; then
       rm -rf "${KDIR}/neutron-clang"
@@ -91,9 +101,11 @@ setup_toolchain() {
       bash <(curl -s "https://raw.githubusercontent.com/Neutron-Toolchains/antman/main/antman") -S
       cd "${KDIR}" || exit 1
     fi
+
     KBUILD_COMPILER_STRING=$("${KDIR}/neutron-clang/bin/clang" -v 2>&1 | head -n 1 | sed 's/(https..*//' | sed 's/ version//')
     export KBUILD_COMPILER_STRING
     export PATH="${KDIR}/neutron-clang/bin/:/usr/bin/:${PATH}"
+
     MAKE=(
       O=out
       LLVM=1
@@ -101,8 +113,7 @@ setup_toolchain() {
     )
   fi
 }
-
-# ========== TELEGRAM ==========
+# ========== TELEGRAM FUNCTIONS ==========
 tg() {
   curl -sX POST "https://api.telegram.org/bot${TOKEN}/sendMessage" \
     -d chat_id="${CHATID}" \
@@ -120,7 +131,7 @@ tgs() {
     -F "caption=$2 | *MD5*: \`$MD5\`"
 }
 
-# ========== YAML POWERED MODULE PACKAGING ==========
+# ========== YAML MODULE PACKAGING ==========
 yakbmod() {
   local profile="${1:-$PROFILE_YAML}"
   [[ ! -f "${profile}" ]] && err "Profile YAML not found: ${profile}" && exit 1
@@ -166,28 +177,18 @@ yakbmod() {
 
   log "YAML-powered vendor module packaging complete (profile: ${profile})"
 }
-# ========== GLOBAL VARIABLES — FULLY HARDENED ==========
-
-# Kernel config
+# ========== GLOBAL VARIABLES ==========
 export CONFIG=dragonheart_defconfig
-
-# Directories
-KDIR=$(pwd); export KDIR
-
-# Linker & compiler
+export KDIR=$(pwd)
 export LINKER="ld.lld"
 export DEVICE="OnePlus 7 Series"
 export CODENAME="op7"
 export BUILDER="cyberknight777"
 export COMPILER="clang"
-
-# Build meta info
-DATE=$(date +"%Y-%m-%d"); export DATE
-REPO_URL="https://github.com/cyberknight777/dragonheart_kernel_oneplus_sm8150"
-COMMIT_HASH=$(git rev-parse --short HEAD); export COMMIT_HASH
-
-# Processor count
-PROCS=$(nproc --all); export PROCS
+export DATE=$(date +"%Y-%m-%d")
+export REPO_URL="https://github.com/cyberknight777/dragonheart_kernel_oneplus_sm8150"
+export COMMIT_HASH=$(git rev-parse --short HEAD)
+export PROCS=$(nproc --all)
 
 # Version file readout (with verification)
 if [[ ! -f "${KDIR}/version" ]]; then
@@ -200,10 +201,9 @@ VERSION=$(grep ver= version | cut -d= -f2)
 export KBUILD_BUILD_VERSION
 export KBUILD_BUILD_USER="cyberknight777"
 export KBUILD_BUILD_HOST="builder"
-zipn="DragonHeart-${CODENAME}-${VERSION}"
-export VERSION zipn
+export zipn="DragonHeart-${CODENAME}-${VERSION}"
 
-# ========== ENVIRONMENT VARIABLE FALLBACKS ==========
+# ENVIRONMENT VARIABLE FALLBACKS
 export PASSWORD="${PASSWORD:-}"
 export GH_TOKEN="${PASSWORD}"
 export TOKEN="${TOKEN:-}"
@@ -211,38 +211,27 @@ export CHATID="${CHATID:-}"
 export PROFILE_YAML="profiles/motorola_cancunf.yaml"
 export TGI="${TGI:-1}"
 
-# ========== CI / DEBUG / RELEASE LOGIC ==========
+# DEBUG / RELEASE / CI LOGIC
 export DEBUG_BUILD=0
-
-# Detect CI environment
 if [[ "${CI:-}" == "true" || "${GITHUB_ACTIONS:-}" == "true" || "${GITLAB_CI:-}" == "true" || "${JENKINS_HOME:-}" != "" ]]; then
   log "CI environment detected — forcing Release build unless overridden"
   export DEBUG_BUILD=0
 fi
-
-# Allow external override (for local or CI debug builds)
 if [[ "${YAKB_DEBUG:-}" == "1" ]]; then
   log "External override detected via YAKB_DEBUG=1 — enabling Debug mode"
   export DEBUG_BUILD=1
 fi
-
-# Apply Debug/Release build flags
 apply_build_flags
-
-# ========== INTERRUPT SIGNAL HANDLER ==========
-trap 'echo -e "\n\n[✗] Received interrupt signal — gracefully exiting."; exit 0' SIGINT
+trap cleanup_on_abort SIGINT SIGTERM
 # ========== BUILD CORE FUNCTIONS ==========
 
-# Lazy toolchain load for every build entry point
 prepare_build() {
   setup_toolchain
   rgn
 }
 
-# Build Kernel Image
 img() {
   prepare_build
-
   if [[ "${DEBUG_BUILD}" == "1" ]]; then
     "${KDIR}/scripts/config" --file "${KDIR}/out/.config" -e CONFIG_DEBUG_INFO -e CONFIG_DEBUG_KERNEL
   else
@@ -265,7 +254,6 @@ img() {
   fi
 }
 
-# Build DTBs
 dtb() {
   prepare_build
   make -j"${PROCS}" "${MAKE[@]}" dtbs dtbo.img dtb.img
@@ -273,7 +261,6 @@ dtb() {
   log "[✓] DTBs built successfully."
 }
 
-# Build Modules
 mod() {
   prepare_build
   make -j"${PROCS}" "${MAKE[@]}" modules
@@ -282,7 +269,6 @@ mod() {
   log "[✓] Modules built successfully."
 }
 
-# Build Headers
 hdr() {
   prepare_build
   mkdir -p "${KDIR}/out/kernel_uapi_headers/usr"
@@ -293,7 +279,6 @@ hdr() {
   log "[✓] Headers built successfully."
 }
 
-# Uprev Kernel Version
 upr() {
   local version="${1:-}"
   if [[ -z "${version}" ]]; then err "Version not provided."; exit 1; fi
@@ -302,7 +287,6 @@ upr() {
   log "[✓] Uprev complete: -DragonHeart-${version}"
 }
 
-# Modify LTO Mode
 lto() {
   local mode="${1:-}"
   if [[ "${mode}" == "full" ]]; then
@@ -316,18 +300,15 @@ lto() {
   log "[✓] LTO mode modified to ${mode}"
 }
 
-# Clean Entire Build Tree
 clean() {
   log "[*] Cleaning full build tree..."
   make clean && make mrproper && rm -rf "${KDIR}/out"
   log "[✓] Source cleaned and out/ removed!"
 }
 
-# Prebuilt Sync — fully retained from your original pre() function
 pre() {
   local repo="${1:-}"
   if [[ -z "${repo}" ]]; then err "Repository not provided."; exit 1; fi
-
   log "[*] Syncing prebuilts..."
   git clone "https://github.com/${repo}.git" prebuilt
   cd prebuilt || exit 1
@@ -355,18 +336,14 @@ pre() {
   rm -rf prebuilt
   log "[✓] Prebuilts updated."
 }
-
 # ========== ARGUMENT PARSER & EXECUTION ==========
 
 if [[ "$#" -eq 0 ]]; then
   log "Interactive menu disabled in CI-safe mode."
   echo "Usage: $0 <command>"
-  echo "Available commands: img, dtb, mod, hdr, yakbmod, clean, upr=V, lto=thin|full, pre=repo, --debug, --release"
+  echo "Available commands: img, dtb, mod, hdr, yakbmod, clean, upr=V, lto=thin|full, pre=repo, --debug, --release, --notelegram"
   exit 1
 fi
-
-# Pass args into env_check for context-aware checks
-env_check "$@"
 
 for arg in "$@"; do
   case "$arg" in
@@ -381,9 +358,10 @@ for arg in "$@"; do
     pre=*) pre="${arg#*=}"; pre "$pre" ;;
     --debug) export DEBUG_BUILD=1; apply_build_flags ;;
     --release) export DEBUG_BUILD=0; apply_build_flags ;;
+    --notelegram) export TGI=0; TELEGRAM_OVERRIDE=disabled ;;
     help|--help)
       echo "Usage: $0 <command>"
-      echo "Available: img dtb mod hdr yakbmod clean upr=V lto=thin|full pre=repo --debug --release"
+      echo "Available: img dtb mod hdr yakbmod clean upr=V lto=thin|full pre=repo --debug --release --notelegram"
       exit 0
       ;;
     *)
@@ -392,3 +370,9 @@ for arg in "$@"; do
       ;;
   esac
 done
+
+if [[ "${TELEGRAM_OVERRIDE}" == "disabled" ]]; then
+  log "Telegram disabled via --notelegram flag"
+fi
+
+env_check "$@"

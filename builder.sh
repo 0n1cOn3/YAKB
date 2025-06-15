@@ -4,7 +4,7 @@ set -euo pipefail
 # Written by: cyberknight777
 # Co-Developed by: 0n1cOn3
 # Project Name: YAKB
-# Current Release: v3.3 FINAL GA
+# Current Release: v3.1-SINGLE-FILE
 # ----------------------------------------------------------------------
 # Copyright (c) 2022-2025 Cyber Knight
 # License: GNU GENERAL PUBLIC LICENSE v3, 29 June 2007
@@ -14,21 +14,84 @@ set -euo pipefail
 log() { echo -e "\e[1;32m[INFO]\e[0m $*"; }
 err() { echo -e "\e[1;31m[✗] ERROR:\e[0m $*" >&2; }
 
-# ========== ABORT CLEANUP HANDLER ==========
 cleanup_on_abort() {
   echo -e "\n\e[1;33m[INFO] Aborted — Performing partial cleanup...\e[0m"
+
   [[ -d "${KDIR}/neutron-clang" ]] && rm -rf "${KDIR}/neutron-clang" && log "Partial Neutron-Clang cleaned."
   [[ -d "${KDIR}/out" ]] && rm -rf "${KDIR}/out" && log "Partial out/ directory cleaned."
   [[ -d "${KDIR}/anykernel3-dragonheart/modules" ]] && rm -rf "${KDIR}/anykernel3-dragonheart/modules" && log "Anykernel modules cleaned."
   [[ -d "${KDIR}/prebuilt" ]] && rm -rf "${KDIR}/prebuilt" && log "Partial prebuilt repo cleaned."
   find "${KDIR}" -type f -name ".pwd" -exec rm -f {} \;
+
   echo -e "\n\e[1;31m[✗] Build aborted — partial files cleaned, logs preserved.\e[0m"
   exit 1
 }
 
+# INTERRUPT SIGNAL HANDLER
 trap cleanup_on_abort SIGINT SIGTERM
 
-# ========== BUILD FLAGS ==========
+# ========== GLOBAL VARIABLES — FULLY HARDENED ==========
+
+# Disable Telegram Notifications for local builds
+export TELEGRAM_OVERRIDE=unset
+
+# Kernel config
+export CONFIG=dragonheart_defconfig
+
+# Directories
+KDIR=$(pwd); export KDIR
+
+# Linker & compiler
+export LINKER="ld.lld"
+export DEVICE="OnePlus 7 Series"
+export CODENAME="op7"
+export BUILDER="cyberknight777"
+export COMPILER="clang"
+
+# Build meta info
+DATE=$(date +"%Y-%m-%d"); export DATE
+REPO_URL="https://github.com/cyberknight777/dragonheart_kernel_oneplus_sm8150"
+COMMIT_HASH=$(git rev-parse --short HEAD); export COMMIT_HASH
+
+# Processor count
+PROCS=$(nproc --all); export PROCS
+
+# Version file readout (with verification)
+if [[ ! -f "${KDIR}/version" ]]; then
+  err "version file not found! Please check https://github.com/cyberknight777/YAKB#version-file"
+  exit 1
+fi
+
+KBUILD_BUILD_VERSION=$(grep num= version | cut -d= -f2)
+VERSION=$(grep ver= version | cut -d= -f2)
+export KBUILD_BUILD_VERSION
+export KBUILD_BUILD_USER="cyberknight777"
+export KBUILD_BUILD_HOST="builder"
+zipn="DragonHeart-${CODENAME}-${VERSION}"
+export VERSION zipn
+
+# ========== ENVIRONMENT VARIABLE FALLBACKS ==========
+export PASSWORD="${PASSWORD:-}"
+export GH_TOKEN="${PASSWORD}"
+export TOKEN="${TOKEN:-}"
+export CHATID="${CHATID:-}"
+export TGI="${TGI:-1}"
+
+# ========== CI / DEBUG / RELEASE LOGIC ==========
+export DEBUG_BUILD=0
+
+# Detect CI environment
+if [[ "${CI:-}" == "true" || "${GITHUB_ACTIONS:-}" == "true" || "${GITLAB_CI:-}" == "true" || "${JENKINS_HOME:-}" != "" ]]; then
+  log "CI environment detected — forcing Release build unless overridden"
+  export DEBUG_BUILD=0
+fi
+
+# Allow external override (for local or CI debug builds)
+if [[ "${YAKB_DEBUG:-}" == "1" ]]; then
+  log "External override detected via YAKB_DEBUG=1 — enabling Debug mode"
+  export DEBUG_BUILD=1
+fi
+# ========== BUILD FLAG HANDLING ==========
 apply_build_flags() {
   if [[ "${DEBUG_BUILD}" == "1" ]]; then
     log "Debug Build Mode Activated"
@@ -38,18 +101,17 @@ apply_build_flags() {
     export KCFLAGS="-O2"
   fi
 }
+
+# Apply Debug/Release build flags immediately after detection
+apply_build_flags
+
 # ========== ENVIRONMENT CHECK ==========
 env_check() {
   local args="$*"
   local missing=()
 
-  # Skip env check for help commands or non-critical actions
-  if [[ "$args" == *"--help"* || "$args" == *"help"* ]]; then
-    return 0
-  fi
-  if [[ "$args" == *"clean"* ]]; then
-    return 0
-  fi
+  # Skip for help & clean
+  [[ "$args" == *"--help"* || "$args" == *"help"* || "$args" == *"clean"* ]] && return 0
 
   # Prebuilt sync requires GitHub credentials
   if [[ "$args" == *"pre="* || "$args" == *"pre "* ]]; then
@@ -58,8 +120,8 @@ env_check() {
     done
   fi
 
-  # Telegram required if enabled AND on real build jobs
-  if [[ "${TGI:-0}" == "1" && ( "$args" == *"img"* || "$args" == *"yakbmod"* || "$args" == *"mod"* || "$args" == *"hdr"* ) ]]; then
+  # Telegram token check only if Telegram enabled
+  if [[ "${TGI}" == "1" && ( "$args" == *"img"* || "$args" == *"yakbmod"* || "$args" == *"mod"* || "$args" == *"hdr"* ) ]]; then
     [[ -z "${TOKEN:-}" ]] && missing+=("TOKEN")
   fi
 
@@ -92,7 +154,6 @@ setup_toolchain() {
       CC=aarch64-elf-gcc
       KCFLAGS="${KCFLAGS}"
     )
-
   elif [[ "${COMPILER}" == "clang" ]]; then
     if [[ ! -f "${KDIR}/neutron-clang/bin/clang" ]]; then
       rm -rf "${KDIR}/neutron-clang"
@@ -113,8 +174,10 @@ setup_toolchain() {
     )
   fi
 }
-# ========== TELEGRAM FUNCTIONS ==========
+
+# ========== TELEGRAM ==========
 tg() {
+  [[ "${TGI}" == "0" ]] && return
   curl -sX POST "https://api.telegram.org/bot${TOKEN}/sendMessage" \
     -d chat_id="${CHATID}" \
     -d parse_mode=Markdown \
@@ -123,6 +186,7 @@ tg() {
 }
 
 tgs() {
+  [[ "${TGI}" == "0" ]] && return
   local MD5
   MD5=$(md5sum "$1" | cut -d' ' -f1)
   curl -fsSL -X POST -F document=@"$1" "https://api.telegram.org/bot${TOKEN}/sendDocument" \
@@ -130,24 +194,76 @@ tgs() {
     -F "parse_mode=Markdown" \
     -F "caption=$2 | *MD5*: \`$MD5\`"
 }
+# ========== CORE PREPARATION ==========
+prepare_build() {
+  setup_toolchain
+  rgn
+}
 
-# ========== YAML MODULE PACKAGING ==========
+# ========== BUILD: Kernel Image ==========
+img() {
+  prepare_build
+
+  if [[ "${DEBUG_BUILD}" == "1" ]]; then
+    "${KDIR}/scripts/config" --file "${KDIR}/out/.config" -e CONFIG_DEBUG_INFO -e CONFIG_DEBUG_KERNEL
+  else
+    "${KDIR}/scripts/config" --file "${KDIR}/out/.config" -d CONFIG_DEBUG_INFO -d CONFIG_DEBUG_KERNEL
+  fi
+  make "${MAKE[@]}" olddefconfig
+
+  log "[*] Building Kernel..."
+  local BUILD_START=$(date +%s)
+
+  if time make -j"${PROCS}" "${MAKE[@]}" Image dtbo.img dtb.img 2>&1 | tee log.txt; then
+    local BUILD_END=$(date +%s)
+    local DIFF=$((BUILD_END - BUILD_START))
+    tg "*Kernel built after $((DIFF / 60)) min $((DIFF % 60)) sec*"
+    log "[✓] Kernel built successfully!"
+    cp -p "${KDIR}/out/arch/arm64/boot/"{Image,dtb.img,dtbo.img} "${KDIR}/out/dist"
+  else
+    tgs "log.txt" "*Build failed*"
+    err "Build Failed!"
+    exit 1
+  fi
+}
+
+# ========== BUILD: DTBs ==========
+dtb() {
+  prepare_build
+  make -j"${PROCS}" "${MAKE[@]}" dtbs dtbo.img dtb.img
+  cp -p "${KDIR}/out/arch/arm64/boot/"{dtb.img,dtbo.img} "${KDIR}/out/dist"
+  log "[✓] DTBs built successfully."
+}
+
+# ========== BUILD: Modules ==========
+mod() {
+  prepare_build
+  make -j"${PROCS}" "${MAKE[@]}" modules
+  make "${MAKE[@]}" INSTALL_MOD_PATH="${KDIR}/out/modules" modules_install
+  find "${KDIR}/out/modules" -type f -iname '*.ko' -exec cp {} "${KDIR}/anykernel3-dragonheart/modules/system/lib/modules/" \;
+  log "[✓] Modules built successfully."
+}
+
+# ========== BUILD: Headers ==========
+hdr() {
+  prepare_build
+  mkdir -p "${KDIR}/out/kernel_uapi_headers/usr"
+  make -j"${PROCS}" "${MAKE[@]}" INSTALL_HDR_PATH="${KDIR}/out/kernel_uapi_headers/usr" headers_install
+  find "${KDIR}/out/kernel_uapi_headers" '(' -name ..install.cmd -o -name .install ')' -exec rm '{}' +
+  tar -czf "${KDIR}/out/kernel-uapi-headers.tar.gz" --directory="${KDIR}/out/kernel_uapi_headers" usr/
+  cp -p "${KDIR}/out/kernel-uapi-headers.tar.gz" "${KDIR}/out/dist"
+  log "[✓] Headers built successfully."
+}
+
+# ========== BUILD: YAML-Powered Vendor Module Packaging ==========
 yakbmod() {
-  local profile="${1:-$PROFILE_YAML}"
-  [[ ! -f "${profile}" ]] && err "Profile YAML not found: ${profile}" && exit 1
-  command -v yq >/dev/null || { err "yq YAML processor not found!"; exit 1; }
-
-  mapfile -t DLKM_MODULES < <(yq '.dlkm_modules[]' "${profile}")
-  mapfile -t VNDR_MODULES < <(yq '.vndr_modules[]' "${profile}")
-  DLKM_URL=$(yq '.urls.dlkm_load' "${profile}")
-  VNDR_URL=$(yq '.urls.vndr_load' "${profile}")
-
   DLKM_DIR="out/vendor_dlkm/lib/modules/0.0/vendor/lib/modules"
   VNDR_DIR="out/vendor_ramdisk/lib/modules/0.0/lib/modules"
   mkdir -p "${DLKM_DIR}" "${VNDR_DIR}" anykernel3-dragonheart/modules
 
-  wget -q "${DLKM_URL}" -O "${DLKM_DIR}/modules.load"
-  wget -q "${VNDR_URL}" -O "${VNDR_DIR}/modules.load"
+  # Manual list — self-contained, no external profiles
+  DLKM_MODULES=(bq25980_mmi.ko bt_drv_connac1x.ko connfem.ko fpsensor_mtk_spi.ko gps_pwr.ko)
+  VNDR_MODULES=(leds-gpio.ko met.ko met_emi_api.ko met_gpu_api.ko met_ipi_api.ko)
 
   for mod in "${DLKM_MODULES[@]}"; do
     if cp "out/dist/${mod}" "${DLKM_DIR}/"; then
@@ -175,140 +291,14 @@ yakbmod() {
   sed -i -e 's|\\([^: ]*lib/modules/[^: ]*\\)|/\\1|g' "${VNDR_DIR}/modules.dep"
   (cd out/vendor_ramdisk/lib/modules/0.0 && find lib | cpio -o -H newc | lz4 -l -12 --favor-decSpeed > dlkm.cpio.lz4 && mv dlkm.cpio.lz4 "${KDIR}/anykernel3-dragonheart/modules/")
 
-  log "YAML-powered vendor module packaging complete (profile: ${profile})"
-}
-# ========== GLOBAL VARIABLES ==========
-export CONFIG=dragonheart_defconfig
-export KDIR=$(pwd)
-export LINKER="ld.lld"
-export DEVICE="OnePlus 7 Series"
-export CODENAME="op7"
-export BUILDER="cyberknight777"
-export COMPILER="clang"
-export DATE=$(date +"%Y-%m-%d")
-export REPO_URL="https://github.com/cyberknight777/dragonheart_kernel_oneplus_sm8150"
-export COMMIT_HASH=$(git rev-parse --short HEAD)
-export PROCS=$(nproc --all)
-
-# Version file readout (with verification)
-if [[ ! -f "${KDIR}/version" ]]; then
-  err "version file not found! Please check https://github.com/cyberknight777/YAKB#version-file"
-  exit 1
-fi
-
-KBUILD_BUILD_VERSION=$(grep num= version | cut -d= -f2)
-VERSION=$(grep ver= version | cut -d= -f2)
-export KBUILD_BUILD_VERSION
-export KBUILD_BUILD_USER="cyberknight777"
-export KBUILD_BUILD_HOST="builder"
-export zipn="DragonHeart-${CODENAME}-${VERSION}"
-
-# ENVIRONMENT VARIABLE FALLBACKS
-export PASSWORD="${PASSWORD:-}"
-export GH_TOKEN="${PASSWORD}"
-export TOKEN="${TOKEN:-}"
-export CHATID="${CHATID:-}"
-export PROFILE_YAML="profiles/motorola_cancunf.yaml"
-export TGI="${TGI:-1}"
-
-# DEBUG / RELEASE / CI LOGIC
-export DEBUG_BUILD=0
-if [[ "${CI:-}" == "true" || "${GITHUB_ACTIONS:-}" == "true" || "${GITLAB_CI:-}" == "true" || "${JENKINS_HOME:-}" != "" ]]; then
-  log "CI environment detected — forcing Release build unless overridden"
-  export DEBUG_BUILD=0
-fi
-if [[ "${YAKB_DEBUG:-}" == "1" ]]; then
-  log "External override detected via YAKB_DEBUG=1 — enabling Debug mode"
-  export DEBUG_BUILD=1
-fi
-apply_build_flags
-trap cleanup_on_abort SIGINT SIGTERM
-# ========== BUILD CORE FUNCTIONS ==========
-
-prepare_build() {
-  setup_toolchain
-  rgn
+  log "HARDENED embedded module packaging complete (no external profile dependency)"
 }
 
-img() {
-  prepare_build
-  if [[ "${DEBUG_BUILD}" == "1" ]]; then
-    "${KDIR}/scripts/config" --file "${KDIR}/out/.config" -e CONFIG_DEBUG_INFO -e CONFIG_DEBUG_KERNEL
-  else
-    "${KDIR}/scripts/config" --file "${KDIR}/out/.config" -d CONFIG_DEBUG_INFO -d CONFIG_DEBUG_KERNEL
-  fi
-  make "${MAKE[@]}" olddefconfig
-
-  log "[*] Building Kernel..."
-  local BUILD_START=$(date +%s)
-  if time make -j"${PROCS}" "${MAKE[@]}" Image dtbo.img dtb.img 2>&1 | tee log.txt; then
-    local BUILD_END=$(date +%s)
-    local DIFF=$((BUILD_END - BUILD_START))
-    [[ "${TGI}" == "1" ]] && tg "*Kernel built after $((DIFF / 60)) min $((DIFF % 60)) sec*"
-    log "[✓] Kernel built successfully!"
-    cp -p "${KDIR}/out/arch/arm64/boot/"{Image,dtb.img,dtbo.img} "${KDIR}/out/dist"
-  else
-    [[ "${TGI}" == "1" ]] && tgs "log.txt" "*Build failed*"
-    err "Build Failed!"
-    exit 1
-  fi
-}
-
-dtb() {
-  prepare_build
-  make -j"${PROCS}" "${MAKE[@]}" dtbs dtbo.img dtb.img
-  cp -p "${KDIR}/out/arch/arm64/boot/"{dtb.img,dtbo.img} "${KDIR}/out/dist"
-  log "[✓] DTBs built successfully."
-}
-
-mod() {
-  prepare_build
-  make -j"${PROCS}" "${MAKE[@]}" modules
-  make "${MAKE[@]}" INSTALL_MOD_PATH="${KDIR}/out/modules" modules_install
-  find "${KDIR}/out/modules" -type f -iname '*.ko' -exec cp {} "${KDIR}/anykernel3-dragonheart/modules/system/lib/modules/" \;
-  log "[✓] Modules built successfully."
-}
-
-hdr() {
-  prepare_build
-  mkdir -p "${KDIR}/out/kernel_uapi_headers/usr"
-  make -j"${PROCS}" "${MAKE[@]}" INSTALL_HDR_PATH="${KDIR}/out/kernel_uapi_headers/usr" headers_install
-  find "${KDIR}/out/kernel_uapi_headers" '(' -name ..install.cmd -o -name .install ')' -exec rm '{}' +
-  tar -czf "${KDIR}/out/kernel-uapi-headers.tar.gz" --directory="${KDIR}/out/kernel_uapi_headers" usr/
-  cp -p "${KDIR}/out/kernel-uapi-headers.tar.gz" "${KDIR}/out/dist"
-  log "[✓] Headers built successfully."
-}
-
-upr() {
-  local version="${1:-}"
-  if [[ -z "${version}" ]]; then err "Version not provided."; exit 1; fi
-  "${KDIR}/scripts/config" --file "${KDIR}/arch/arm64/configs/${CONFIG}" --set-str CONFIG_LOCALVERSION "-DragonHeart-${version}"
-  rgn
-  log "[✓] Uprev complete: -DragonHeart-${version}"
-}
-
-lto() {
-  local mode="${1:-}"
-  if [[ "${mode}" == "full" ]]; then
-    "${KDIR}/scripts/config" --file "${KDIR}/arch/arm64/configs/${CONFIG}" -e LTO_CLANG_FULL -d LTO_CLANG_THIN
-  elif [[ "${mode}" == "thin" ]]; then
-    "${KDIR}/scripts/config" --file "${KDIR}/arch/arm64/configs/${CONFIG}" -d LTO_CLANG_FULL -e LTO_CLANG_THIN
-  else
-    err "Incorrect LTO mode"
-    exit 1
-  fi
-  log "[✓] LTO mode modified to ${mode}"
-}
-
-clean() {
-  log "[*] Cleaning full build tree..."
-  make clean && make mrproper && rm -rf "${KDIR}/out"
-  log "[✓] Source cleaned and out/ removed!"
-}
-
+# ========== PREBUILT SYNC (unchanged, fully integrated logic) ==========
 pre() {
   local repo="${1:-}"
   if [[ -z "${repo}" ]]; then err "Repository not provided."; exit 1; fi
+
   log "[*] Syncing prebuilts..."
   git clone "https://github.com/${repo}.git" prebuilt
   cd prebuilt || exit 1
@@ -316,18 +306,21 @@ pre() {
   git config credential.helper "store --file .pwd"
   cp -p "${KDIR}/out/dist/"{Image,dtb.img,dtbo.img} "${KDIR}/prebuilt/"
   tar -xvf "${KDIR}/out/dist/kernel-uapi-headers.tar.gz" -C "${KDIR}/prebuilt/kernel-headers/"
+
   for file in "${KDIR}/prebuilt/modules/vendor_boot/"*.ko; do
     filename=$(basename "${file}")
     if [[ -e "${KDIR}/out/dist/${filename}" ]]; then
       cp -p "${KDIR}/out/dist/${filename}" "${KDIR}/prebuilt/modules/vendor_boot/"
     fi
   done
+
   for file in "${KDIR}/prebuilt/modules/vendor_dlkm/"*.ko; do
     filename=$(basename "${file}")
     if [[ -e "${KDIR}/out/dist/${filename}" ]]; then
       cp -p "${KDIR}/out/dist/${filename}" "${KDIR}/prebuilt/modules/vendor_dlkm/"
     fi
   done
+
   git add Image dtb.img dtbo.img kernel-headers modules
   git commit -s -m "kernel: Update prebuilts $(date -u '+%d%m%Y%I%M')" -m "- Auto-generated commit."
   git commit --amend --reset-author --no-edit
@@ -336,7 +329,7 @@ pre() {
   rm -rf prebuilt
   log "[✓] Prebuilts updated."
 }
-# ========== ARGUMENT PARSER & EXECUTION ==========
+# ========== FINAL ARGUMENT PARSER & EXECUTION ==========
 
 if [[ "$#" -eq 0 ]]; then
   log "Interactive menu disabled in CI-safe mode."
@@ -351,7 +344,7 @@ for arg in "$@"; do
     dtb) dtb ;;
     mod) mod ;;
     hdr) hdr ;;
-    yakbmod) yakbmod "$PROFILE_YAML" ;;
+    yakbmod) yakbmod ;;
     clean) clean ;;
     upr=*) upr="${arg#*=}"; upr "$upr" ;;
     lto=*) lto="${arg#*=}"; lto "$lto" ;;
@@ -371,8 +364,10 @@ for arg in "$@"; do
   esac
 done
 
+# After arguments parsing — Telegram override message
 if [[ "${TELEGRAM_OVERRIDE}" == "disabled" ]]; then
-  log "Telegram disabled via --notelegram flag"
+  log "Telegram notifications disabled via --notelegram flag"
 fi
 
+# Perform final env check (hardening)
 env_check "$@"

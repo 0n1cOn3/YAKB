@@ -1,10 +1,10 @@
 # YAKB — Yet Another Kernel Builder (v3.0)
 
-YAKB is an modular Android kernel build and vendor module packaging system written in Bash.
+YAKB is an modular BSP-grade Build Kernel Orchestrator written in Bash.
 
 - Two-way UX:- Use as an argument-based CLI tool or via an interactive menu.
-- Profile-driven:- Supports YAML profile definitions for modular vendor (DLKM/VNDR) packaging.
-- Enterprise-Grade:- Integrated error handling, CI compliance, and advanced logging.
+- Profile-driven: Supports YAML profile definitions for modular vendor (DLKM/VNDR) packaging.
+- Enterprise-Grade: Integrated error handling, CI compliance, and advanced logging.
 - OTA, Telegram, and GitHub Release flows fully supported.
 
 ## 🚀 Usage

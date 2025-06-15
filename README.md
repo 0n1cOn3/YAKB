@@ -115,8 +115,8 @@ profiles/motorola_cancunf.yaml
 - PRs, bugfixes, and device profiles are welcome.
 - Issues for CI/CD improvements or new device support are encouraged.
 
----
+## Misc
 
 - Version file
 
-Adapt this [[https://github.com/cyberknight777/dragonheart_kernel_oneplus_sm8150/commit/8a48d7facf525e050e7e6939031c602f9d035a1f][commit]] for yourself.
+Adapt this [commit](https://github.com/cyberknight777/dragonheart_kernel_oneplus_sm8150/commit/8a48d7facf525e050e7e6939031c602f9d035a1f) for yourself.

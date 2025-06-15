@@ -1,4 +1,4 @@
-## YAKB Release Version 3.0
+## YAKB Release Version 3.1
 
 Date: 2025-06-15
 
@@ -7,8 +7,8 @@ Date: 2025-06-15
 ---
 
 Core Features:
-- Kernel Build System for DragonHeart Project and more
-- YAML-powered Vendor Module Packaging
+- Kernel Build System for DragonHeart Project
+- Vendor Module Packaging
 - Interactive and CI-Safe Execution Modes
 - Telegram Notification Integration (Toggleable)
 - Signal-Safe Cleanup Handler

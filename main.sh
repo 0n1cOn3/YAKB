@@ -1,130 +1,130 @@
 #!/usr/bin/env bash
+# ----------------------------------------------------------------------
 # Written by: cyberknight777
-# YAKB v2.0
-# Copyright (c) 2022-2023 Cyber Knight <cyberknight755@gmail.com>
-#
-#			GNU GENERAL PUBLIC LICENSE
-#			 Version 3, 29 June 2007
-#
-# Copyright (C) 2007 Free Software Foundation, Inc. <https://fsf.org/>
-# Everyone is permitted to copy and distribute verbatim copies
-# of this license document, but changing it is not allowed.
+# Co-Developed by: 0n1cOn3
+# Project Name: YAKB
+# Current Release: v3.0
+# ----------------------------------------------------------------------
+# Copyright (c) 2022-2025 Cyber Knight
+# License: GNU GENERAL PUBLIC LICENSE v3, 29 June 2007
+# ----------------------------------------------------------------------
 
-# Some Placeholders: [!] [*] [✓] [✗]
+set -euo pipefail
 
-# Default defconfig to use for builds.
+# ========== ENVIRONMENT CHECK ==========
+env_check() {
+  local missing=()
+  for var in PASSWORD TOKEN GH_TOKEN; do
+    [[ -z "${!var:-}" ]] && missing+=("$var")
+  done
+  if [[ ${#missing[@]} -ne 0 ]]; then
+    echo -e "\e[1;31m[✗] ERROR: Missing environment variables: ${missing[*]}\e[0m"
+    exit 1
+  fi
+}
+env_check
+
+# ========== GLOBAL VARS ==========
 export CONFIG=dragonheart_defconfig
-
-# Default directory where kernel is located in.
-KDIR=$(pwd)
-export KDIR
-
-# Default linker to use for builds.
+KDIR=$(pwd); export KDIR
 export LINKER="ld.lld"
-
-# Device name.
 export DEVICE="OnePlus 7 Series"
-
-# Date of build.
-DATE=$(date +"%Y-%m-%d")
-export DATE
-
-# Device codename.
+DATE=$(date +"%Y-%m-%d"); export DATE
 export CODENAME="op7"
-
-# Builder name.
 export BUILDER="cyberknight777"
-
-# Kernel repository URL.
 export REPO_URL="https://github.com/cyberknight777/dragonheart_kernel_oneplus_sm8150"
-
-# Commit hash of HEAD.
-COMMIT_HASH=$(git rev-parse --short HEAD)
-export COMMIT_HASH
-
-# Build status. Set 1 for release builds. | Set 0 for bleeding edge builds.
-if [ "${RELEASE}" == 1 ]; then
-	export STATUS="Release"
-	export CHATID=-1001361882613
-	export re="rc"
-else
-	export STATUS="Bleeding-Edge"
-	export CHATID=-1001564538644
-	export re="r"
-fi
-
-# Telegram Information. Set 1 to enable. | Set 0 to disable.
+COMMIT_HASH=$(git rev-parse --short HEAD); export COMMIT_HASH
 export TGI=1
-
-# Number of jobs to run.
-PROCS=$(nproc --all)
-export PROCS
-
-# Compiler to use for builds.
+PROCS=$(nproc --all); export PROCS
 export COMPILER=clang
+GH_TOKEN="${PASSWORD}"; export GH_TOKEN
+export PROFILE_YAML="profiles/motorola_cancunf.yaml"
 
-# GitHub Token utilized with the gh binary to release kernel builds.
-GH_TOKEN="${PASSWORD}"
-export GH_TOKEN
+# ========== BUILD TYPE HANDLING WITH CI ENV AUTODETECT ==========
 
-# Requirements
-if [ "${CI}" == 0 ]; then
-	if ! hash dialog make curl wget unzip find 2>/dev/null; then
-		echo -e "\n\e[1;31m[✗] Install dialog, make, curl, wget, unzip, and find! \e[0m"
-		exit 1
-	fi
+# Default to release build
+export DEBUG_BUILD=0
+
+# Detect CI environments
+if [[ "${CI:-}" == "true" || "${GITHUB_ACTIONS:-}" == "true" || "${GITLAB_CI:-}" == "true" || "${JENKINS_HOME:-}" != "" ]]; then
+  log "CI environment detected → Forcing Release build unless overridden"
+  export DEBUG_BUILD=0
 fi
 
-if [[ ${COMPILER} == gcc ]]; then
-	if [ ! -d "${KDIR}/gcc64" ]; then
-		git clone https://github.com/cyberknight777/gcc-arm64 --depth=1 gcc64
-	fi
-
-	if [ ! -d "${KDIR}/gcc32" ]; then
-		git clone https://github.com/cyberknight777/gcc-arm --depth=1 gcc32
-	fi
-
-	KBUILD_COMPILER_STRING=$("${KDIR}"/gcc64/bin/aarch64-elf-gcc --version | head -n 1)
-	export KBUILD_COMPILER_STRING
-	export PATH="${KDIR}"/gcc32/bin:"${KDIR}"/gcc64/bin:/usr/bin/:${PATH}
-	MAKE+=(
-		O=out
-		CROSS_COMPILE=aarch64-elf-
-		CROSS_COMPILE_ARM32=arm-eabi-
-		LD="${KDIR}"/gcc64/bin/aarch64-elf-"${LINKER}"
-		AR=aarch64-elf-ar
-		AS=aarch64-elf-as
-		NM=aarch64-elf-nm
-		OBJDUMP=aarch64-elf-objdump
-		OBJCOPY=aarch64-elf-objcopy
-		CC=aarch64-elf-gcc
-	)
-
-elif [[ ${COMPILER} == clang ]]; then
-	if [ ! -f "${KDIR}/neutron-clang/bin/clang" ]; then
-		rm -rf "${KDIR}"/neutron-clang
-		mkdir "${KDIR}"/neutron-clang
-		cd "${KDIR}"/neutron-clang || exit 1
-		bash <(curl -s "https://raw.githubusercontent.com/Neutron-Toolchains/antman/main/antman") -S
-		cd "${KDIR}" || exit 1
-	fi
-
-	KBUILD_COMPILER_STRING=$("${KDIR}"/neutron-clang/bin/clang -v 2>&1 | head -n 1 | sed 's/(https..*//' | sed 's/ version//')
-	export KBUILD_COMPILER_STRING
-	export PATH=$KDIR/neutron-clang/bin/:/usr/bin/:${PATH}
-	MAKE+=(
-		O=out
-		LLVM=1
-	)
+# Allow external override via environment
+if [[ "${YAKB_DEBUG:-}" == "1" ]]; then
+  log "External override via YAKB_DEBUG=1 → Debug Build Activated"
+  export DEBUG_BUILD=1
 fi
 
-if [ ! -d "${KDIR}/anykernel3-dragonheart/" ]; then
-	git clone --depth=1 https://github.com/cyberknight777/anykernel3 -b "${CODENAME}" anykernel3-dragonheart
+apply_build_flags
+
+
+# ========== SIMPLE LOGGING ==========
+log() { echo -e "\e[1;32m[INFO]\e[0m $*"; }
+err() { echo -e "\e[1;31m[✗] ERROR:\e[0m $*" >&2; }
+
+# ========== PRE-FLIGHT PREP ==========
+if [[ "${CI:-0}" == 0 ]]; then
+  for b in dialog make curl wget unzip find zip; do
+    if ! command -v "$b" >/dev/null; then
+      err "Install $b!"
+      exit 1
+    fi
+  done
 fi
 
-if [ ! -f "${KDIR}/version" ]; then
-	echo -e "\n\e[1;31m[✗] version file not found!!! Read https://github.com/cyberknight777/YAKB#version-file for more information.\e[0m"
-	exit 1
+# ========== CLONE AND TOOLCHAIN SETUP ==========
+if [[ "${COMPILER}" == "gcc" ]]; then
+  if [[ ! -d "${KDIR}/gcc64" ]]; then
+    git clone https://github.com/cyberknight777/gcc-arm64 --depth=1 gcc64
+  fi
+  if [[ ! -d "${KDIR}/gcc32" ]]; then
+    git clone https://github.com/cyberknight777/gcc-arm --depth=1 gcc32
+  fi
+  KBUILD_COMPILER_STRING=$("${KDIR}"/gcc64/bin/aarch64-elf-gcc --version | head -n 1)
+  export KBUILD_COMPILER_STRING
+  export PATH="${KDIR}/gcc32/bin:${KDIR}/gcc64/bin:/usr/bin/:${PATH}"
+  MAKE+=(
+    O=out
+    CROSS_COMPILE=aarch64-elf-
+    CROSS_COMPILE_ARM32=arm-eabi-
+    LD="${KDIR}/gcc64/bin/aarch64-elf-${LINKER}"
+    AR=aarch64-elf-ar
+    AS=aarch64-elf-as
+    NM=aarch64-elf-nm
+    OBJDUMP=aarch64-elf-objdump
+    OBJCOPY=aarch64-elf-objcopy
+    CC=aarch64-elf-gcc
+    KCFLAGS="${KCFLAGS}"
+  )
+elif [[ "${COMPILER}" == "clang" ]]; then
+  if [[ ! -f "${KDIR}/neutron-clang/bin/clang" ]]; then
+    rm -rf "${KDIR}/neutron-clang"
+    mkdir "${KDIR}/neutron-clang"
+    cd "${KDIR}/neutron-clang" || exit 1
+    bash <(curl -s "https://raw.githubusercontent.com/Neutron-Toolchains/antman/main/antman") -S
+    cd "${KDIR}" || exit 1
+  fi
+  KBUILD_COMPILER_STRING=$("${KDIR}/neutron-clang/bin/clang" -v 2>&1 | head -n 1 | sed 's/(https..*//' | sed 's/ version//')
+  export KBUILD_COMPILER_STRING
+  export PATH="${KDIR}/neutron-clang/bin/:/usr/bin/:${PATH}"
+  MAKE+=(
+    O=out
+    LLVM=1
+    KCFLAGS="${KCFLAGS}"
+  )
+fi
+
+# Clone AnyKernel3 if not present
+if [[ ! -d "${KDIR}/anykernel3-dragonheart/" ]]; then
+  git clone --depth=1 https://github.com/cyberknight777/anykernel3 -b "${CODENAME}" anykernel3-dragonheart
+fi
+
+# Version file check
+if [[ ! -f "${KDIR}/version" ]]; then
+  err "version file not found!!! Read https://github.com/cyberknight777/YAKB#version-file for more information."
+  exit 1
 fi
 
 KBUILD_BUILD_VERSION=$(grep num= version | cut -d= -f2)
@@ -133,64 +133,42 @@ export KBUILD_BUILD_USER="cyberknight777"
 export KBUILD_BUILD_HOST="builder"
 VERSION=$(grep ver= version | cut -d= -f2)
 kver="${KBUILD_BUILD_VERSION}"
-zipn=DragonHeart-"${CODENAME}"-"${VERSION}"
+zipn="DragonHeart-${CODENAME}-${VERSION}"
 
-# A function to exit on SIGINT.
-exit_on_signal_SIGINT() {
-	echo -e "\n\n\e[1;31m[✗] Received INTR call - Exiting...\e[0m"
-	exit 0
-}
-trap exit_on_signal_SIGINT SIGINT
-
-# A function to send message(s) via Telegram's BOT api.
+# ========== SIGNAL HANDLER ==========
+trap 'echo -e "\n\n[✗] Received INTR call - Exiting..."; exit 0' SIGINT
+# ========== TELEGRAM ==========
 tg() {
-	curl -sX POST https://api.telegram.org/bot"${TOKEN}"/sendMessage \
-		-d chat_id="${CHATID}" \
-		-d parse_mode=Markdown \
-		-d disable_web_page_preview=true \
-		-d text="$1" &>/dev/null
+  curl -sX POST "https://api.telegram.org/bot${TOKEN}/sendMessage" \
+    -d chat_id="${CHATID}" \
+    -d parse_mode=Markdown \
+    -d disable_web_page_preview=true \
+    -d text="$1" &>/dev/null
 }
 
-# A function to send file(s) via Telegram's BOT api.
 tgs() {
-	MD5=$(md5sum "$1" | cut -d' ' -f1)
-	curl -fsSL -X POST -F document=@"$1" https://api.telegram.org/bot"${TOKEN}"/sendDocument \
-		-F "chat_id=${CHATID}" \
-		-F "parse_mode=Markdown" \
-		-F "caption=$2 | *MD5*: \`$MD5\`"
+  local MD5
+  MD5=$(md5sum "$1" | cut -d' ' -f1)
+  curl -fsSL -X POST -F document=@"$1" "https://api.telegram.org/bot${TOKEN}/sendDocument" \
+    -F "chat_id=${CHATID}" \
+    -F "parse_mode=Markdown" \
+    -F "caption=$2 | *MD5*: \`$MD5\`"
 }
 
-# A function to clean kernel source prior building.
-clean() {
-	echo -e "\n\e[1;93m[*] Cleaning source and out/ directory! \e[0m"
-	make clean && make mrproper && rm -rf "${KDIR}"/out
-	echo -e "\n\e[1;32m[✓] Source cleaned and out/ removed! \e[0m"
-}
-
-# A function to regenerate defconfig.
+# ========== KERNEL BUILD ==========
 rgn() {
-	echo -e "\n\e[1;93m[*] Regenerating defconfig! \e[0m"
-	mkdir -p "${KDIR}"/out/{dist,modules,kernel_uapi_headers/usr}
-	make "${MAKE[@]}" $CONFIG
-	cp -rf "${KDIR}"/out/.config "${KDIR}"/arch/arm64/configs/$CONFIG
-	echo -e "\n\e[1;32m[✓] Defconfig regenerated! \e[0m"
+  echo -e "\n\e[1;93m[*] Regenerating defconfig! \e[0m"
+  mkdir -p "${KDIR}/out/{dist,modules,kernel_uapi_headers/usr}"
+  make "${MAKE[@]}" "$CONFIG"
+  cp -rf "${KDIR}/out/.config" "${KDIR}/arch/arm64/configs/${CONFIG}"
+  echo -e "\n\e[1;32m[✓] Defconfig regenerated! \e[0m"
 }
 
-# A function to open a menu based program to update current config.
-mcfg() {
-	rgn
-	echo -e "\n\e[1;93m[*] Making Menuconfig! \e[0m"
-	make "${MAKE[@]}" menuconfig
-	cp -rf "${KDIR}"/out/.config "${KDIR}"/arch/arm64/configs/$CONFIG
-	echo -e "\n\e[1;32m[✓] Saved Modifications! \e[0m"
-}
-
-# A function to build the kernel.
 img() {
-	if [[ ${TGI} == "1" ]]; then
-		tg "
+  if [[ "${TGI}" == "1" ]]; then
+    tg "
 *Build Number*: \`${kver}\`
-*Status*: \`${STATUS}\`
+*Status*: \`${STATUS:-Development}\`
 *Builder*: \`${BUILDER}\`
 *Core count*: \`$(nproc --all)\`
 *Device*: \`${DEVICE} [${CODENAME}]\`
@@ -198,545 +176,250 @@ img() {
 *Date*: \`$(date)\`
 *Zip Name*: \`${zipn}\`
 *Compiler*: \`${KBUILD_COMPILER_STRING}\`
-*Linker*: \`$("${KDIR}"/neutron-clang/bin/${LINKER} -v | head -n1 | sed 's/(compatible with [^)]*)//' |
-			head -n 1 | perl -pe 's/\(http.*?\)//gs' | sed -e 's/  */ /g' -e 's/[[:space:]]*$//')\`
+*Linker*: \`$("${KDIR}/neutron-clang/bin/${LINKER}" -v | head -n1 | sed 's/(compatible with [^)]*)//' | perl -pe 's/\\(http.*?\\)//gs' | sed -e 's/  */ /g' -e 's/[[:space:]]*$//')\`
 *Branch*: \`$(git rev-parse --abbrev-ref HEAD)\`
 *Last Commit*: [${COMMIT_HASH}](${REPO_URL}/commit/${COMMIT_HASH})
 "
-	fi
-	rgn
-	echo -e "\n\e[1;93m[*] Building Kernel! \e[0m"
-	BUILD_START=$(date +"%s")
-	time make -j"$PROCS" "${MAKE[@]}" Image dtbo.img dtb.img 2>&1 | tee log.txt
-	BUILD_END=$(date +"%s")
-	DIFF=$((BUILD_END - BUILD_START))
-	if [ -f "${KDIR}/out/arch/arm64/boot/Image" ]; then
-		if [[ ${TGI} == "1" ]]; then
-			tg "*Kernel Built after $((DIFF / 60)) minute(s) and $((DIFF % 60)) second(s)*"
-		fi
-		echo -e "\n\e[1;32m[✓] Kernel built after $((DIFF / 60)) minute(s) and $((DIFF % 60)) second(s)! \e[0m"
-		echo -e "\n\e[1;93m[*] Copying built files! \e[0m"
-		cp -p "${KDIR}"/out/arch/arm64/boot/{Image,dtb.img,dtbo.img} "${KDIR}"/out/dist || exit 1
-		echo -e "\n\e[1;32m[✓] Copied built files! \e[0m"
-	else
-		if [[ ${TGI} == "1" ]]; then
-			tgs "log.txt" "*Build failed*"
-		fi
-		echo -e "\n\e[1;31m[✗] Build Failed! \e[0m"
-		exit 1
-	fi
+  fi
+
+  rgn
+
+  # Apply Debug Kernel Configurations
+  if [[ "${DEBUG_BUILD}" == "1" ]]; then
+    "${KDIR}/scripts/config" --file "${KDIR}/out/.config" -e CONFIG_DEBUG_INFO -e CONFIG_DEBUG_KERNEL
+  else
+    "${KDIR}/scripts/config" --file "${KDIR}/out/.config" -d CONFIG_DEBUG_INFO -d CONFIG_DEBUG_KERNEL
+  fi
+  make "${MAKE[@]}" olddefconfig
+
+  echo -e "\n\e[1;93m[*] Building Kernel! \e[0m"
+  local BUILD_START BUILD_END DIFF
+  BUILD_START=$(date +"%s")
+
+  if time make -j"${PROCS}" "${MAKE[@]}" Image dtbo.img dtb.img 2>&1 | tee log.txt; then
+    BUILD_END=$(date +"%s")
+    DIFF=$((BUILD_END - BUILD_START))
+    tg "*Kernel built after $((DIFF / 60)) minute(s) and $((DIFF % 60)) second(s)*"
+    echo -e "\n\e[1;32m[✓] Kernel built successfully! \e[0m"
+    echo -e "\n\e[1;93m[*] Copying built files! \e[0m"
+    cp -p "${KDIR}/out/arch/arm64/boot/"{Image,dtb.img,dtbo.img} "${KDIR}/out/dist"
+  else
+    tgs "log.txt" "*Build failed*"
+    err "Build Failed!"
+    exit 1
+  fi
 }
 
-# A function to build DTBs.
-dtb() {
-	rgn
-	echo -e "\n\e[1;93m[*] Building DTBS! \e[0m"
-	time make -j"$PROCS" "${MAKE[@]}" dtbs dtbo.img dtb.img
-	echo -e "\n\e[1;32m[✓] Built DTBS! \e[0m"
-	echo -e "\n\e[1;93m[*] Copying DTB files! \e[0m"
-	cp -p "${KDIR}"/out/arch/arm64/boot/{dtb,dtbo}.img "${KDIR}"/out/dist || exit 1
-	echo -e "\n\e[1;32m[✓] Copied DTB files! \e[0m"
-}
-
-# A function to build out-of-tree modules.
 mod() {
-	if [[ ${TGI} == "1" ]]; then
-		tg "*Building Modules!*"
-	fi
-	rgn
-	echo -e "\n\e[1;93m[*] Building Modules! \e[0m"
-	make -j"$PROCS" "${MAKE[@]}" modules
-	make "${MAKE[@]}" INSTALL_MOD_PATH="${KDIR}"/out/modules modules_install
-	find "${KDIR}"/out/modules -type f -iname '*.ko' -exec cp {} "${KDIR}"/anykernel3-dragonheart/modules/system/lib/modules/ \;
-	echo -e "\n\e[1;32m[✓] Built Modules! \e[0m"
-	echo -e "\n\e[1;93m[*] Copying modules files! \e[0m"
-	MOD=$(find "${KDIR}"/out/modules -type f -name "*.ko")
-	for FILE in ${MOD}; do
-		cp -p "${FILE}" "${KDIR}"/out/dist || exit 1
-	done
-	echo -e "\n\e[1;32m[✓] Copied modules files! \e[0m"
+  if [[ "${TGI}" == "1" ]]; then
+    tg "*Building Modules!*"
+  fi
+  rgn
+  echo -e "\n\e[1;93m[*] Building Modules! \e[0m"
+  make -j"${PROCS}" "${MAKE[@]}" modules
+  make "${MAKE[@]}" INSTALL_MOD_PATH="${KDIR}/out/modules" modules_install
+  find "${KDIR}/out/modules" -type f -iname '*.ko' -exec cp {} "${KDIR}/anykernel3-dragonheart/modules/system/lib/modules/" \;
+  echo -e "\n\e[1;32m[✓] Built and copied Modules! \e[0m"
 }
 
-# A function to build kernel UAPI headers.
 hdr() {
-	if [[ ${TGI} == "1" ]]; then
-		tg "*Building UAPI Headers!*"
-	fi
-	rgn
-	echo -e "\n\e[1;93m[*] Building UAPI Headers! \e[0m"
-	mkdir -p "${KDIR}"/out/kernel_uapi_headers/usr
-	make -j"$PROCS" "${MAKE[@]}" INSTALL_HDR_PATH="${KDIR}"/out/kernel_uapi_headers/usr headers_install
-	find "${KDIR}"/out/kernel_uapi_headers '(' -name ..install.cmd -o -name .install ')' -exec rm '{}' +
-	tar -czf "${KDIR}"/out/kernel-uapi-headers.tar.gz --directory="${KDIR}"/out/kernel_uapi_headers usr/
-	echo -e "\n\e[1;32m[✓] Built UAPI Headers! \e[0m"
-	echo -e "\n\e[1;93m[*] Copying UAPI Headers! \e[0m"
-	cp -p "${KDIR}"/out/kernel-uapi-headers.tar.gz "${KDIR}"/out/dist || exit 1
-	echo -e "\n\e[1;32m[✓] Copied UAPI Headers! \e[0m"
+  if [[ "${TGI}" == "1" ]]; then
+    tg "*Building UAPI Headers!*"
+  fi
+  rgn
+  echo -e "\n\e[1;93m[*] Building UAPI Headers! \e[0m"
+  mkdir -p "${KDIR}/out/kernel_uapi_headers/usr"
+  make -j"${PROCS}" "${MAKE[@]}" INSTALL_HDR_PATH="${KDIR}/out/kernel_uapi_headers/usr" headers_install
+  find "${KDIR}/out/kernel_uapi_headers" '(' -name ..install.cmd -o -name .install ')' -exec rm '{}' +
+  tar -czf "${KDIR}/out/kernel-uapi-headers.tar.gz" --directory="${KDIR}/out/kernel_uapi_headers" usr/
+  cp -p "${KDIR}/out/kernel-uapi-headers.tar.gz" "${KDIR}/out/dist"
+  echo -e "\n\e[1;32m[✓] Headers built and copied! \e[0m"
 }
 
-# A function to copy built objects to prebuilt kernel tree.
-pre() {
-	if [[ ${TGI} == "1" ]]; then
-		tg "*Copying built objects to prebuilt kernel tree!*"
-	fi
-	echo -e "\n\e[1;93m[*] Copying built objects to prebuilt kernel tree! \e[0m"
-	git clone https://github.com/"${1}".git prebuilt || exit 1
-	cd prebuilt || exit 1
-	echo "https://cyberknight777:$PASSWORD@github.com" >.pwd
-	git config credential.helper "store --file .pwd"
-	cp -p "${KDIR}"/out/dist/{Image,dtb.img,dtbo.img} "${KDIR}"/prebuilt || exit 1
-	tar -xvf "${KDIR}"/out/dist/kernel-uapi-headers.tar.gz -C "${KDIR}"/prebuilt/kernel-headers || exit 1
-	for file in "${KDIR}"/prebuilt/modules/vendor_boot/*.ko; do
-		filename=$(basename "${file}")
-
-		if [ -e "${KDIR}/out/dist/${filename}" ]; then
-			cp -p "${KDIR}/out/dist/${filename}" "${KDIR}/prebuilt/modules/vendor_boot" || exit 1
-		fi
-	done
-	for file in "${KDIR}"/prebuilt/modules/vendor_dlkm/*.ko; do
-		filename=$(basename "${file}")
-
-		if [ -e "${KDIR}/out/dist/${filename}" ]; then
-			cp -p "${KDIR}/out/dist/${filename}" "${KDIR}/prebuilt/modules/vendor_dlkm" || exit 1
-		fi
-
-	done
-	git add Image dtb.img dtbo.img kernel-headers modules
-	git commit -s -m "kernel: Update prebuilts $(date -u '+%d%m%Y%I%M')" -m "- This is an auto-generated commit."
-	git commit --amend --reset-author --no-edit
-	git push
-	cd ../ || exit 1
-	rm -rf prebuilt
-	echo -e "\n\e[1;32m[✓] Copied built objects to prebuilt kernel tree! \e[0m"
+clean() {
+  echo -e "\n\e[1;93m[*] Cleaning source and out/ directory! \e[0m"
+  make clean && make mrproper && rm -rf "${KDIR}/out"
+  echo -e "\n\e[1;32m[✓] Source cleaned and out/ removed! \e[0m"
 }
 
-# A function to modify LTO mode for builds. [thin|full] ThinLTO, FullLTO.
-lto() {
-
-	echo -e "\n\e[1;93m[*] Modifying LTO mode to ${1}! \e[0m"
-
-	if [[ ${1} == "full" ]]; then
-		"${KDIR}"/scripts/config --file "${KDIR}"/arch/arm64/configs/"${CONFIG}" \
-			-e LTO_CLANG_FULL \
-			-d LTO_CLANG_THIN
-	elif [[ ${1} == "thin" ]]; then
-		"${KDIR}"/scripts/config --file "${KDIR}"/arch/arm64/configs/"${CONFIG}" \
-			-d LTO_CLANG_FULL \
-			-e LTO_CLANG_THIN
-	else
-		echo -e "\n\e[1;31m[✗] Incorrect LTO mode set! \e[0m"
-		exit 1
-	fi
-
-	echo -e "\n\e[1;32m[✓] Modified LTO mode to ${1}! \e[0m"
-}
-
-# A function to build an AnyKernel3 zip.
-mkzip() {
-	if [[ ${TGI} == "1" ]]; then
-		tg "*Building zip!*"
-	fi
-	echo -e "\n\e[1;93m[*] Building zip! \e[0m"
-	mkdir -p "${KDIR}"/anykernel3-dragonheart/dtbs
-	cp "${KDIR}"/out/dist/dtbo.img "${KDIR}"/anykernel3-dragonheart
-	cp "${KDIR}"/out/dist/dtb.img "${KDIR}"/anykernel3-dragonheart
-	cp "${KDIR}"/out/dist/Image "${KDIR}"/anykernel3-dragonheart
-	cd "${KDIR}"/anykernel3-dragonheart || exit 1
-	zip -r9 "$zipn".zip . -x ".git*" -x "README.md" -x "LICENSE" -x "*.zip"
-	echo -e "\n\e[1;32m[✓] Built zip! \e[0m"
-	if [[ ${OTA} == "1" ]]; then
-		git clone https://github.com/cyberknight777/op7_json.git
-		cd op7_json || exit 1
-		echo "https://cyberknight777:$PASSWORD@github.com" >.pwd
-		git config credential.helper "store --file .pwd"
-		sha1=$(sha1sum ../"${zipn}".zip | cut -d ' ' -f1)
-		if [[ ${RELEASE} != "1" ]]; then
-			rm changelog_r.md
-			wget "${CL_LINK}/raw" -O changelog_r.md
-			echo "
-{
-  \"kernel\": {
-  \"name\": \"DragonHeart\",
-  \"version\": \"$VERSION\",
-  \"link\": \"https://github.com/cyberknight777/op7_json/releases/download/$VERSION/$zipn.zip\",
-  \"changelog_url\": \"https://raw.githubusercontent.com/cyberknight777/op7_json/master/changelog_r.md\",
-  \"date\": \"$DATE\",
-  \"sha1\": \"$sha1\"
-  },
-  \"support\": {
-    \"link\": \"https://t.me/knightschat\"
-  }
-}
-" >DragonHeart-r.json
-			git add DragonHeart-r.json changelog_r.md || exit 1
-			git commit -s -m "DragonHeart: Update $CODENAME to $VERSION release" -m "- This is a bleeding edge release."
-			git commit --amend --reset-author --no-edit
-			git push
-			gh release create "${VERSION}" -t "DragonHeart for $CODENAME [BLEEDING EDGE] - $VERSION"
-			gh release upload "${VERSION}" ../"${zipn}.zip"
-		else
-			rm changelog.md
-			wget "${CL_LINK}"/raw -O changelog.md
-			echo "
-{
-  \"kernel\": {
-  \"name\": \"DragonHeart\",
-  \"version\": \"$VERSION\",
-  \"link\": \"https://github.com/cyberknight777/op7_json/releases/download/$VERSION/$zipn.zip\",
-  \"changelog_url\": \"https://raw.githubusercontent.com/cyberknight777/op7_json/master/changelog.md\",
-  \"date\": \"$DATE\",
-  \"sha1\": \"$sha1\"
-  },
-  \"support\": {
-    \"link\": \"https://t.me/knightschat\"
-  }
-}
-" >DragonHeart-rc.json
-			git add DragonHeart-rc.json changelog.md || exit 1
-			git commit -s -m "DragonHeart: Update $CODENAME to $VERSION release" -m "- This is a stable release."
-			git commit --amend --reset-author --no-edit
-			git push
-			gh release create "${VERSION}" -t "DragonHeart for $CODENAME [RELEASE] - $VERSION"
-			gh release upload "${VERSION}" ../"${zipn}.zip"
-		fi
-		cd ../ || exit 1
-		rm -rf op7_json || exit 1
-	fi
-	if [[ ${TGI} == "1" ]]; then
-		tgs "${zipn}.zip" "*#${kver} ${KBUILD_COMPILER_STRING}*"
-		tg "
-*Build*: https://github.com/cyberknight777/op7\_json/releases/download/$VERSION/$zipn.zip
-*Changelog*: https://github.com/cyberknight777/op7\_json/blob/master/changelog\_${re}.md
-*OTA*: https://raw.githubusercontent.com/cyberknight777/op7\_json/master/DragonHeart-${re}.json
-"
-	fi
-}
-
-# A function to build specific objects.
-obj() {
-	rgn
-	echo -e "\n\e[1;93m[*] Building ${1}! \e[0m"
-	time make -j"$PROCS" "${MAKE[@]}" "$1"
-	echo -e "\n\e[1;32m[✓] Built ${1}! \e[0m"
-}
-
-# A function to uprev localversion in defconfig.
 upr() {
-	echo -e "\n\e[1;93m[*] Bumping localversion to -DragonHeart-${1}! \e[0m"
-	"${KDIR}"/scripts/config --file "${KDIR}"/arch/arm64/configs/$CONFIG --set-str CONFIG_LOCALVERSION "-DragonHeart-${1}"
-	rgn
-	echo -e "\n\e[1;32m[✓] Bumped localversion to -DragonHeart-${1}! \e[0m"
+  local version="${1:-}"
+  if [[ -z "${version}" ]]; then err "Version not provided."; exit 1; fi
+  echo -e "\n\e[1;93m[*] Bumping localversion to -DragonHeart-${version}! \e[0m"
+  "${KDIR}/scripts/config" --file "${KDIR}/arch/arm64/configs/${CONFIG}" --set-str CONFIG_LOCALVERSION "-DragonHeart-${version}"
+  rgn
+  echo -e "\n\e[1;32m[✓] Uprev complete: -DragonHeart-${version}! \e[0m"
 }
 
-# A function to showcase the options provided for args-based usage.
-helpmenu() {
-	echo -e "\n\e[1m
-usage: bash $0 <arg>
-
-example: bash $0 mcfg
-example: bash $0 mcfg img
-example: bash $0 mcfg img mkzip
-example: bash $0 --obj=drivers/android/binder.o
-example: bash $0 --obj=kernel/sched/
-example: bash $0 --upr=r16
-example: bash $0 --pre=YAAP/device_xiaomi_sunny-kernel
-example: bash $0 --lto=thin
-
-	 mcfg   Runs make menuconfig
-	 img    Builds Kernel
-	 dtb    Builds dtb(o).img
-	 mod    Builds out-of-tree modules
-	 hdr    Builds kernel UAPI headers
-	 --pre  Copies built objects to prebuilt kernel tree
-	 --lto  Modify LTO mode
-	 mkzip  Builds anykernel3 zip
-	 --obj  Builds specific driver/subsystem
-	 rgn    Regenerates defconfig
-	 --upr  Uprevs kernel version in defconfig
-\e[0m"
+lto() {
+  local mode="${1:-}"
+  if [[ -z "${mode}" ]]; then err "LTO mode not specified"; exit 1; fi
+  echo -e "\n\e[1;93m[*] Modifying LTO mode to ${mode}! \e[0m"
+  if [[ "${mode}" == "full" ]]; then
+    "${KDIR}/scripts/config" --file "${KDIR}/arch/arm64/configs/${CONFIG}" -e LTO_CLANG_FULL -d LTO_CLANG_THIN
+  elif [[ "${mode}" == "thin" ]]; then
+    "${KDIR}/scripts/config" --file "${KDIR}/arch/arm64/configs/${CONFIG}" -d LTO_CLANG_FULL -e LTO_CLANG_THIN
+  else
+    err "Incorrect LTO mode"
+    exit 1
+  fi
+  echo -e "\n\e[1;32m[✓] LTO mode modified to ${mode}! \e[0m"
 }
 
-# A function to setup menu-based usage.
+pre() {
+  local repo="${1:-}"
+  if [[ -z "${repo}" ]]; then err "Repository not provided."; exit 1; fi
+  if [[ "${TGI}" == "1" ]]; then
+    tg "*Copying built objects to prebuilt kernel tree!*"
+  fi
+  echo -e "\n\e[1;93m[*] Copying built objects to prebuilt kernel tree! \e[0m"
+  git clone "https://github.com/${repo}.git" prebuilt
+  cd prebuilt || exit 1
+  echo "https://cyberknight777:${PASSWORD}@github.com" > .pwd
+  git config credential.helper "store --file .pwd"
+  cp -p "${KDIR}/out/dist/"{Image,dtb.img,dtbo.img} "${KDIR}/prebuilt/"
+  tar -xvf "${KDIR}/out/dist/kernel-uapi-headers.tar.gz" -C "${KDIR}/prebuilt/kernel-headers/"
+  for file in "${KDIR}/prebuilt/modules/vendor_boot/"*.ko; do
+    filename=$(basename "${file}")
+    if [[ -e "${KDIR}/out/dist/${filename}" ]]; then
+      cp -p "${KDIR}/out/dist/${filename}" "${KDIR}/prebuilt/modules/vendor_boot/"
+    fi
+  done
+  for file in "${KDIR}/prebuilt/modules/vendor_dlkm/"*.ko; do
+    filename=$(basename "${file}")
+    if [[ -e "${KDIR}/out/dist/${filename}" ]]; then
+      cp -p "${KDIR}/out/dist/${filename}" "${KDIR}/prebuilt/modules/vendor_dlkm/"
+    fi
+  done
+  git add Image dtb.img dtbo.img kernel-headers modules
+  git commit -s -m "kernel: Update prebuilts $(date -u '+%d%m%Y%I%M')" -m "- This is an auto-generated commit."
+  git commit --amend --reset-author --no-edit
+  git push
+  cd "${KDIR}" || exit 1
+  rm -rf prebuilt
+  echo -e "\n\e[1;32m[✓] Prebuilts updated! \e[0m"
+}
+yakbmod() {
+  local profile="${1:-$PROFILE_YAML}"
+  [[ ! -f "${profile}" ]] && err "Profile YAML not found: ${profile}" && exit 1
+  command -v yq >/dev/null || { err "yq YAML processor not found!"; exit 1; }
+
+  mapfile -t DLKM_MODULES < <(yq '.dlkm_modules[]' "${profile}")
+  mapfile -t VNDR_MODULES < <(yq '.vndr_modules[]' "${profile}")
+  DLKM_URL=$(yq '.urls.dlkm_load' "${profile}")
+  VNDR_URL=$(yq '.urls.vndr_load' "${profile}")
+
+  DLKM_DIR="out/vendor_dlkm/lib/modules/0.0/vendor/lib/modules"
+  VNDR_DIR="out/vendor_ramdisk/lib/modules/0.0/lib/modules"
+  mkdir -p "${DLKM_DIR}" "${VNDR_DIR}" anykernel3-dragonheart/modules
+
+  wget -q "${DLKM_URL}" -O "${DLKM_DIR}/modules.load"
+  wget -q "${VNDR_URL}" -O "${VNDR_DIR}/modules.load"
+
+  for mod in "${DLKM_MODULES[@]}"; do
+    if cp "out/dist/${mod}" "${DLKM_DIR}/"; then
+      "${KDIR}/neutron-clang/bin/llvm-strip" --strip-debug "${DLKM_DIR}/${mod}" || err "DLKM strip failed: ${mod}"
+    else
+      err "DLKM copy failed: ${mod}"
+    fi
+  done
+
+  for mod in "${VNDR_MODULES[@]}"; do
+    if cp "out/dist/${mod}" "${VNDR_DIR}/"; then
+      "${KDIR}/neutron-clang/bin/llvm-strip" --strip-debug "${VNDR_DIR}/${mod}" || err "VNDR strip failed: ${mod}"
+    else
+      err "VNDR copy failed: ${mod}"
+    fi
+  done
+
+  depmod -b "out/vendor_dlkm" 0.0
+  cp out/vendor_dlkm/lib/modules/0.0/modules.{alias,dep,softdep} "${DLKM_DIR}/"
+  sed -i -e 's|\\([^: ]*lib/modules/[^: ]*\\)|/\\1|g' "${DLKM_DIR}/modules.dep"
+  (cd out/vendor_dlkm/lib/modules/0.0/vendor && tar -cvpf - lib/ | xz -9e -T0 > dlkm.tar.xz && mv dlkm.tar.xz "${KDIR}/anykernel3-dragonheart/modules/")
+
+  depmod -b "out/vendor_ramdisk" 0.0
+  cp out/vendor_ramdisk/lib/modules/0.0/modules.{alias,dep,softdep} "${VNDR_DIR}/"
+  sed -i -e 's|\\([^: ]*lib/modules/[^: ]*\\)|/\\1|g' "${VNDR_DIR}/modules.dep"
+  (cd out/vendor_ramdisk/lib/modules/0.0 && find lib | cpio -o -H newc | lz4 -l -12 --favor-decSpeed > dlkm.cpio.lz4 && mv dlkm.cpio.lz4 "${KDIR}/anykernel3-dragonheart/modules/")
+
+  log "YAKB modular vendor module packaging complete (profile: ${profile})"
+}
+
+# ========== MENU HANDLER ==========
 ndialog() {
-	HEIGHT=16
-	WIDTH=40
-	CHOICE_HEIGHT=30
-	BACKTITLE="Yet Another Kernel Builder"
-	TITLE="YAKB v1.0"
-	MENU="Choose one of the following options: "
-	OPTIONS=(1 "Build kernel"
-		2 "Build DTBs"
-		3 "Build modules"
-		4 "Build kernel UAPI headers"
-		5 "Copy built objects to prebuilt kernel tree"
-		6 "Modify LTO mode"
-		7 "Open menuconfig"
-		8 "Regenerate defconfig"
-		9 "Uprev localversion"
-		10 "Build AnyKernel3 zip"
-		11 "Build a specific object"
-		12 "Clean"
-		13 "Exit"
-	)
-	CHOICE=$(dialog --clear \
-		--backtitle "$BACKTITLE" \
-		--title "$TITLE" \
-		--menu "$MENU" \
-		$HEIGHT $WIDTH $CHOICE_HEIGHT \
-		"${OPTIONS[@]}" \
-		2>&1 >/dev/tty)
-	clear
-	case "$CHOICE" in
-	1)
-		clear
-		img
-		echo -ne "\e[1mPress enter to continue or 0 to exit! \e[0m"
-		read -r a1
-		if [ "$a1" == "0" ]; then
-			exit 0
-		else
-			clear
-			ndialog
-		fi
-		;;
-	2)
-		clear
-		dtb
-		echo -ne "\e[1mPress enter to continue or 0 to exit! \e[0m"
-		read -r a1
-		if [ "$a1" == "0" ]; then
-			exit 0
-		else
-			clear
-			ndialog
-		fi
-		;;
-	3)
-		clear
-		mod
-		echo -ne "\e[1mPress enter to continue or 0 to exit! \e[0m"
-		read -r a1
-		if [ "$a1" == "0" ]; then
-			exit 0
-		else
-			clear
-			ndialog
-		fi
-		;;
-	4)
-		clear
-		hdr
-		echo -ne "\e[1mPress enter to continue or 0 to exit! \e[0m"
-		read -r a1
-		if [ "$a1" == "0" ]; then
-			exit 0
-		else
-			clear
-			ndialog
-		fi
-		;;
-	5)
-		dialog --inputbox --stdout "Enter prebuilt kernel repo: " 15 50 | tee .p
-		pr=$(cat .p)
-		if [ -z "$pr" ]; then
-			dialog --inputbox --stdout "Enter prebuilt kernel repo: " 15 50 | tee .p
-		fi
-		clear
-		pre "$pr"
-		rm .p
-		echo -ne "\e[1mPress enter to continue or 0 to exit! \e[0m"
-		read -r a1
-		if [ "$a1" == "0" ]; then
-			exit 0
-		else
-			clear
-			ndialog
-		fi
-		;;
-	6)
-		dialog --inputbox --stdout "Enter LTO mode (thin|full): " 15 50 | tee .l
-		pr=$(cat .l)
-		if [ -z "$lt" ]; then
-			dialog --inputbox --stdout "Enter LTO mode (thin|full): " 15 50 | tee .l
-		fi
-		clear
-		lto "$lt"
-		rm .l
-		echo -ne "\e[1mPress enter to continue or 0 to exit! \e[0m"
-		read -r a1
-		if [ "$a1" == "0" ]; then
-			exit 0
-		else
-			clear
-			ndialog
-		fi
-		;;
-	7)
-		clear
-		mcfg
-		echo -ne "\e[1mPress enter to continue or 0 to exit! \e[0m"
-		read -r a1
-		if [ "$a1" == "0" ]; then
-			exit 0
-		else
-			clear
-			ndialog
-		fi
-		;;
-	8)
-		clear
-		rgn
-		echo -ne "\e[1mPress enter to continue or 0 to exit! \e[0m"
-		read -r a1
-		if [ "$a1" == "0" ]; then
-			exit 0
-		else
-			clear
-			ndialog
-		fi
-		;;
-	9)
-		dialog --inputbox --stdout "Enter version number: " 15 50 | tee .t
-		ver=$(cat .t)
-		clear
-		upr "$ver"
-		rm .t
-		echo -ne "\e[1mPress enter to continue or 0 to exit! \e[0m"
-		read -r a1
-		if [ "$a1" == "0" ]; then
-			exit 0
-		else
-			clear
-			ndialog
-		fi
-		;;
-	10)
-		mkzip
-		echo -ne "\e[1mPress enter to continue or 0 to exit! \e[0m"
-		read -r a1
-		if [ "$a1" == "0" ]; then
-			exit 0
-		else
-			clear
-			ndialog
-		fi
-		;;
-	11)
-		dialog --inputbox --stdout "Enter object path: " 15 50 | tee .f
-		ob=$(cat .f)
-		if [ -z "$ob" ]; then
-			dialog --inputbox --stdout "Enter object path: " 15 50 | tee .f
-		fi
-		clear
-		obj "$ob"
-		rm .f
-		echo -ne "\e[1mPress enter to continue or 0 to exit! \e[0m"
-		read -r a1
-		if [ "$a1" == "0" ]; then
-			exit 0
-		else
-			clear
-			ndialog
-		fi
-		;;
-	12)
-		clear
-		clean
-		img
-		echo -ne "\e[1mPress enter to continue or 0 to exit! \e[0m"
-		read -r a1
-		if [ "$a1" == "0" ]; then
-			exit 0
-		else
-			clear
-			ndialog
-		fi
-		;;
-	13)
-		echo -e "\n\e[1m Exiting YAKB...\e[0m"
-		sleep 3
-		exit 0
-		;;
-	esac
+  HEIGHT=16
+  WIDTH=50
+  CHOICE_HEIGHT=30
+  BACKTITLE="Yet Another Kernel Builder"
+  TITLE="YAKB v3.1 Hardened"
+  MENU="Choose one:"
+
+  OPTIONS=(
+    1 "Build kernel"
+    2 "Build DTBs"
+    3 "Build modules"
+    4 "Build kernel UAPI headers"
+    5 "Copy built objects to prebuilt kernel tree"
+    6 "Modify LTO mode"
+    7 "Open menuconfig"
+    8 "Regenerate defconfig"
+    9 "Uprev localversion"
+    10 "YAML Vendor Module Packaging"
+    11 "Clean build tree"
+    12 "Toggle Debug/Release Mode"
+    13 "Exit"
+  )
+
+  CHOICE=$(dialog --clear --backtitle "$BACKTITLE" --title "$TITLE" --menu "$MENU" "$HEIGHT" "$WIDTH" "$CHOICE_HEIGHT" "${OPTIONS[@]}" 2>&1 >/dev/tty)
+  clear
+
+  case "$CHOICE" in
+    1) img ;;
+    2) dtb ;;
+    3) mod ;;
+    4) hdr ;;
+    5) read -r -p "Enter prebuilt repo: " pr; pre "$pr" ;;
+    6) read -r -p "Enter LTO mode (thin|full): " lt; lto "$lt" ;;
+    7) mcfg ;;
+    8) rgn ;;
+    9) read -r -p "Enter version: " ver; upr "$ver" ;;
+    10) yakbmod "$PROFILE_YAML" ;;
+    11) clean; img ;;
+    12)
+      if [[ "${DEBUG_BUILD}" == "0" ]]; then
+        export DEBUG_BUILD=1
+      else
+        export DEBUG_BUILD=0
+      fi
+      apply_build_flags
+      ndialog
+      ;;
+    13) echo "Exiting YAKB..."; exit 0 ;;
+  esac
 }
 
-if [ "${CI}" == 1 ]; then
-	upr "${VERSION}"
-fi
-
-if [[ -z $* ]]; then
-	ndialog
+# ========== ARGUMENT HANDLER ==========
+if [[ "$#" -eq 0 ]]; then
+  ndialog
 fi
 
 for arg in "$@"; do
-	case "${arg}" in
-	"mcfg")
-		mcfg
-		;;
-	"img")
-		img
-		;;
-	"dtb")
-		dtb
-		;;
-	"mod")
-		mod
-		;;
-	"hdr")
-		hdr
-		;;
-	"--pre="*)
-		preb="${arg#*=}"
-		if [[ -z $preb ]]; then
-			echo "Use --pre=YAAP/device_xiaomi_sunny-kernel"
-			exit 1
-		else
-			pre "$preb"
-		fi
-		;;
-	"--lto="*)
-		ltom="${arg#*=}"
-		if [[ -z $ltom ]]; then
-			echo "Use --lto=(thin|full)"
-			exit 1
-		else
-			lto "$ltom"
-		fi
-		;;
-	"mkzip")
-		mkzip
-		;;
-	"--obj="*)
-		object="${arg#*=}"
-		if [[ -z $object ]]; then
-			echo "Use --obj=filename.o"
-			exit 1
-		else
-			obj "$object"
-		fi
-		;;
-	"rgn")
-		rgn
-		;;
-	"--upr="*)
-		vers="${arg#*=}"
-		if [[ -z $vers ]]; then
-			echo "Use --upr=version"
-			exit 1
-		else
-			upr "$vers"
-		fi
-		;;
-	"clean")
-		clean
-		;;
-	"help")
-		helpmenu
-		exit 1
-		;;
-	*)
-		helpmenu
-		exit 1
-		;;
-	esac
+  case "$arg" in
+    mcfg) mcfg ;;
+    img) img ;;
+    dtb) dtb ;;
+    mod) mod ;;
+    hdr) hdr ;;
+    clean) clean ;;
+    yakbmod) yakbmod "$PROFILE_YAML" ;;
+    rgn) rgn ;;
+    --pre=*) pre="${arg#*=}"; pre "$pre" ;;
+    --lto=*) lto="${arg#*=}"; lto "$lto" ;;
+    --upr=*) upr="${arg#*=}"; upr "$upr" ;;
+    --profile=*) PROFILE_YAML="${arg#*=}" ;;
+    --debug) export DEBUG_BUILD=1; apply_build_flags ;;
+    --release) export DEBUG_BUILD=0; apply_build_flags ;;
+    help|--help) echo "Usage: $0 [options]"; exit 0 ;;
+    *) echo "Unknown argument: $arg"; exit 1 ;;
+  esac
 done

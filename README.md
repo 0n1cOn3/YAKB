@@ -1,4 +1,4 @@
-# YAKB — Yet Another Kernel Builder (v3.0)
+# YAKB — Yet Another Kernel Builder (v3.1)
 
 YAKB is an modular BSP-grade Build Kernel Orchestrator written in Bash.
 
@@ -22,12 +22,6 @@ bash builder.sh img mkzip
 ```
 
 This builds the kernel and produces an AnyKernel3 zip.
-
-```bash
-bash builder.sh yakbmod
-```
-
-Or with a custom device profile:
 
 ```bash
 bash builder.sh yakbmod
@@ -95,7 +89,6 @@ Runs the interactive menu with all build, packaging, and uprev options.
 ## 📖 Documentation
 
 - See comments in `builder.sh` for configuration details.
-- See `profiles/` for modular device definitions.
 
 ## 🤝 Contributing
 

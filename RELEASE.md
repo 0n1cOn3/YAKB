@@ -32,7 +32,7 @@ Runtime Dependencies:
 
 Known Issues: None
 
-Verified By:
+Developed By:
 - `@cyberknight777` (Primary Author)
 - `@0n1cOn3` (Core System Hardenings & Parser Refactor)
 

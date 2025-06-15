@@ -3,7 +3,7 @@
 YAKB is an modular BSP-grade Build Kernel Orchestrator written in Bash.
 
 - Two-way UX:- Use as an argument-based CLI tool or via an interactive menu.
-- Profile-driven: Supports YAML profile definitions for modular vendor (DLKM/VNDR) packaging.
+- DLKM/VNDR: Supports modular vendor packaging.
 - Enterprise-Grade: Integrated error handling, CI compliance, and advanced logging.
 - OTA, Telegram, and GitHub Release flows fully supported.
 
@@ -11,33 +11,32 @@ YAKB is an modular BSP-grade Build Kernel Orchestrator written in Bash.
 
 ### Preparation
 
-Edit `main.sh` and YAML profiles as needed.
+Edit `builder.sh` as needed.
 
-- All variables are commented inline for clarity.
-- Modular device/vendor profiles are found in `profiles/`.
+- All variables are commented inline for clarity..
 
 ### CLI
 
 ```bash
-bash main.sh img mkzip
+bash builder.sh img mkzip
 ```
 
 This builds the kernel and produces an AnyKernel3 zip.
 
 ```bash
-bash main.sh yakbmod
+bash builder.sh yakbmod
 ```
 
 Or with a custom device profile:
 
 ```bash
-bash main.sh yakbmod --profile=profiles/your_device.yaml
+bash builder.sh yakbmod
 ```
 
 ### Menu
 
 ```bash
-bash main.sh
+bash builder.sh
 ```
 
 Runs the interactive menu with all build, packaging, and uprev options.
@@ -45,7 +44,6 @@ Runs the interactive menu with all build, packaging, and uprev options.
 ## 🧑‍💻 Features
 
 - Argument-based and menu-based usage
-- YAML-driven vendor module factory (yakbmod) for dynamic device profiles
 - Full error code/explanation summary at the end of each run
 - CI-compatible: works non-interactively, logs all errors for audit and reproducibility
 - Preserves OTA, Telegram, and GitHub flows
@@ -62,7 +60,6 @@ Runs the interactive menu with all build, packaging, and uprev options.
 ## 📦 Requirements
 
 - bash
-- yq (YAML processor, v4+)
 - dialog
 - make
 - curl
@@ -89,16 +86,6 @@ Runs the interactive menu with all build, packaging, and uprev options.
 - Final summary displays all encountered errors.
 - `CI_STRICT=1` exits on first error in CI/CD strict mode.
 
-## 📓 Device Profiles
-
-YAML profiles reside under `profiles/` and define module packaging, URLs, and device-specific lists.
-
-Example profile file:
-
-```bash
-profiles/motorola_cancunf.yaml
-```
-
 ## 🛠️ Integrations
 
 - OTA JSON/Release logic supported out-of-the-box
@@ -107,7 +94,7 @@ profiles/motorola_cancunf.yaml
 
 ## 📖 Documentation
 
-- See comments in `main.sh` for configuration details.
+- See comments in `builder.sh` for configuration details.
 - See `profiles/` for modular device definitions.
 
 ## 🤝 Contributing

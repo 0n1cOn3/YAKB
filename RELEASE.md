@@ -25,7 +25,6 @@ Tested Platforms:
 Runtime Dependencies:
 - bash (GNU Bash >= 5.0)
 - curl, wget, git, md5sum, depmod, cpio, lz4, tar, xz
-- yq (YAML Processor)
 - Neutron-Toolchains Antman (for Clang)
 
 ---

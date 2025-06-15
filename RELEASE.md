@@ -1,6 +1,10 @@
-Release: YAKB v3.0
+## YAKB Release Version 3.0
+
 Date: 2025-06-15
-Status: Hardened / Production / Stable
+
+**Status:** Hardened / Production / Stable
+
+---
 
 Core Features:
 - Kernel Build System for DragonHeart Project and more
@@ -24,10 +28,13 @@ Runtime Dependencies:
 - yq (YAML Processor)
 - Neutron-Toolchains Antman (for Clang)
 
+---
+
 Known Issues: None
 
 Verified By:
-- cyberknight777
-- 0n1cOn3
+- `@cyberknight777` (Primary Author)
+- `@0n1cOn3` (Core System Hardenings & Parser Refactor)
 
 SHA256 Verified Build (for initial builds): OK
+---
